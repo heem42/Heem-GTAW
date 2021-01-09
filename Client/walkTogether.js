@@ -1,8 +1,4 @@
-var isWalking = false;
-var walkFunc = null;
-var walkingWith = null;
-
-function getWalkingPlayerOffset(ang, position) {
+function getWalkingPlayerOffset(player, ang, position) {
     /*
     * Given an angle (facing angle) and position, this method returns offset for walk.
     * If position is left, offset of left position of player is returned.
@@ -30,46 +26,7 @@ function getWalkingPlayerOffset(ang, position) {
         y = -y;
     }
 
-    return mp.players.local.getOffsetFromGivenWorldCoords(mp.players.local.position.x + x, mp.players.local.position.y + y, mp.players.local.position.z);
-}
-
-function getFacingAngle(direction) {
-    /*
-    * This method returns the angle (facing angle) given direction vector.
-    * It calculates the angle using the direction coordinates using trigonometry.
-    */
-    const cam_x = direction.x;
-    const cam_y = direction.y;
-
-    let ang = 0;
-    if(cam_x >= 0 && cam_x <= 1) {
-        if(cam_y >= 0 && cam_y <= 1) {
-            ang = 360 - (Math.asin(cam_x) * (180/Math.PI));
-        }
-        else {
-            ang = Math.asin(cam_x) * (180/Math.PI) + 180;
-        }
-    }
-    else {
-        ang = Math.acos(cam_y) * (180/Math.PI);
-    }
-
-    return ang;
-}
-
-function walkSync() {
-    /*
-    * This method sets player's facing angle calculated by getFacingAngle method.
-    */
-    if(isWalking) {
-        const camera = mp.cameras.new("gameplay");
-        const cam_z = camera.getDirection().z;
-        if(Math.abs(cam_z) < 0.2) {
-            const ang = getFacingAngle(camera.getDirection())
-            mp.players.local.setHeading(ang);
-            walkingWith.setHeading(ang);
-        }
-    }
+    return player.getOffsetFromGivenWorldCoords(player.position.x + x, player.position.y + y, player.position.z);
 }
 
 // Events.
@@ -85,41 +42,51 @@ mp.events.add("attach", (player, target, position) => {
     /*
     * Attach target to current player after calculating the correct offset.
     */
-    const camera = mp.cameras.new("gameplay");
-    const cam_x = camera.getDirection().x;
-    const cam_y = camera.getDirection().y;
     const ang = player.getHeading()
-    const offset = getWalkingPlayerOffset(ang, position)
-    
-    target.attachTo(player.handle, 23553, offset.x, offset.y, 0, cam_x, cam_y, 0, true, true, true, false, 0, false);
+    target.setHeading(ang);
+    const offset = getWalkingPlayerOffset(player, ang, position)
+    target.attachTo(player.handle, 23553, offset.x, offset.y, 0, 0, 0, 0, true, true, true, false, 0, false);
 })
 
-mp.events.add("attachedTo", (p, position) => {
+mp.events.add('entityStreamIn', (entity) => {
     /*
-    * Attach current player to target after calculating correct offset.
+    * Attach walking players for a newly streamed in player.
     */
-    const ang = p.getHeading()
-    mp.players.local.setHeading(ang);
-    const offset = getWalkingPlayerOffset(ang, position)
-    
-    mp.players.local.attachTo(p.handle, 23553, offset.x, offset.y, 0, 0, 0, 0, true, true, true, false, 0, false);
-})
+    if (entity == null)
+        return;
+    if (entity.type !== "player") return;
+    if(mp.players.local.getVariable("walkingWith")) {
+        mp.events.callRemote("attachWalkingPlayers", entity)
+    }
+});
 
-mp.events.add("beginCameraControl", (target) => {
+mp.events.add('entityStreamOut', (entity) => {
     /*
-    * Sets variables and interval method for controlling direction with mouse.
+    * Detach walking players for streaming out player.
     */
-    isWalking = true;
-    walkingWith = target;
-    walkFunc = setInterval(walkSync, 50)
-})
+    if (entity == null)
+        return;
+    if (entity.type !== "player") return;
+    if(mp.players.local.getVariable("walkingWith")) {
+        mp.events.callRemote("detachWalkingPlayers", entity);
+    }
+});
 
-mp.events.add("stopCameraControl", () => {
-    /*
-    * Clears variables and interval method for controlling direction with mouse.
-    */
-    isWalking = false;
-    walkingWith = null;
-    clearInterval(walkFunc)
-    walkFunc = null;
-})
+// Added these 2 events to play walking animation again once a user streams in.
+
+mp.events.add("play_walking_anim", (entity, animDictionary, animName) => {
+    mp.game.streaming.requestAnimDict(animDictionary);
+    new Promise(() => {
+        const timer = setInterval(() => {
+            if(mp.game.streaming.hasAnimDictLoaded(animDictionary)) {
+                clearInterval(timer);
+                resolve(entity, animDictionary, animName);
+            }
+        }, 100);
+    });
+});
+
+function resolve(entity, animDictionary, animName)
+{
+    entity.taskPlayAnim(animDictionary, animName, 8.0, 0.0, -1, 1, 0.0, false, false, false);
+}
